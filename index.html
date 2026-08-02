@@ -112,8 +112,7 @@
   #expLog { display: flex; flex-direction: column; gap: 4px; font-size: 13px; max-height: 220px; overflow-y: auto; }
   .exp-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding: 6px 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .exp-label { flex: 1; }
-  .drag-handle { cursor: grab; color: var(--border); font-size: 14px; letter-spacing: -2px; touch-action: none; padding: 0 2px; }
-  .exp-row.dragging { opacity: 0.5; background: var(--surface-2); }
+  .exp-row.dragging { opacity: 0.6; background: var(--surface-2); border-radius: 6px; }
   .exp-row.drop-target { border-top: 2px solid var(--accent); }
   .cat-row, .exp-row { transition: transform 0.1s; touch-action: pan-y; }
   .pressing { transform: scale(0.98); background: var(--surface-2); }
@@ -305,7 +304,6 @@ function render() {
     row.className = 'exp-row';
     row.dataset.exp = e.id;
     row.innerHTML =
-      '<span class="drag-handle">⠿</span>' +
       '<span class="exp-label">' + (cat ? cat.name : e.cat) + (e.note ? ' — ' + e.note : '') + '</span>' +
       '<span>' + fmt(e.amount) + '</span>';
     log.appendChild(row);
@@ -359,124 +357,127 @@ document.getElementById('addExpBtn').addEventListener('click', () => {
   save(); render();
 });
 
-// ---- Long-press menu for categories & expenses ----
-let pressTimer = null;
-let pressedEl = null;
+// ---- Gesture system: hold=menu, hold+move=reorder (expenses) ----
 let menuTarget = null; // {type:'cat'|'exp', id}
+
+let pressTimer = null;   // timer that "arms" the gesture after a hold
+let pressedEl = null;    // row being pressed
+let pressType = null;    // 'cat' | 'exp'
+let pressId = null;
 let startX = 0, startY = 0;
-const MOVE_CANCEL = 10; // px of movement that cancels a press
-
-function clearPress() {
-  if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-  if (pressedEl) { pressedEl.classList.remove('pressing'); pressedEl = null; }
-}
-
-function startPress(el, type, id) {
-  clearPress();
-  pressedEl = el;
-  el.classList.add('pressing');
-  pressTimer = setTimeout(() => {
-    if (pressedEl) pressedEl.classList.remove('pressing');
-    if (navigator.vibrate) { try { navigator.vibrate(15); } catch(e){} }
-    openMenu(type, id);
-    pressTimer = null;
-  }, 450);
-}
+let armed = false;       // hold threshold reached
+let dragging = false;    // actively reordering
+let activePointer = null;
+const HOLD_MS = 350;
+const MOVE_CANCEL = 12;  // before armed: this much movement cancels the hold
 
 function findRow(target) {
-  const catRow = target.closest('[data-cat-row]');
+  const catRow = target.closest && target.closest('[data-cat-row]');
   if (catRow) return { el: catRow, type: 'cat', id: catRow.dataset.catRow };
-  const expRow = target.closest('[data-exp]');
+  const expRow = target.closest && target.closest('[data-exp]');
   if (expRow) return { el: expRow, type: 'exp', id: expRow.dataset.exp };
   return null;
 }
 
-function onPointerDown(ev) {
-  // Ignore right-click; let inputs/buttons work normally
-  if (ev.button === 2) return;
-  if (ev.target.matches('input, select, button')) return;
-  if (ev.target.classList.contains('drag-handle')) return; // drag, not hold-menu
-  const found = findRow(ev.target);
-  if (!found) return;
-  startX = ev.clientX;
-  startY = ev.clientY;
-  startPress(found.el, found.type, found.id);
+function resetGesture() {
+  if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+  if (pressedEl) pressedEl.classList.remove('pressing', 'dragging');
+  document.querySelectorAll('.exp-row.drop-target').forEach(r => r.classList.remove('drop-target'));
+  pressedEl = null; pressType = null; pressId = null;
+  armed = false; dragging = false; activePointer = null;
 }
 
-function onPointerMove(ev) {
-  if (!pressTimer) return;
-  if (Math.abs(ev.clientX - startX) > MOVE_CANCEL ||
-      Math.abs(ev.clientY - startY) > MOVE_CANCEL) {
-    clearPress();
+function onGesturePointerDown(ev) {
+  if (ev.button === 2) return;
+  if (ev.target.matches('input, select, button')) return;
+  const found = findRow(ev.target);
+  if (!found) return;
+  resetGesture();
+  pressedEl = found.el;
+  pressType = found.type;
+  pressId = found.id;
+  startX = ev.clientX;
+  startY = ev.clientY;
+  activePointer = ev.pointerId;
+  pressedEl.classList.add('pressing');
+  pressTimer = setTimeout(() => {
+    armed = true;
+    pressTimer = null;
+    if (navigator.vibrate) { try { navigator.vibrate(15); } catch(e){} }
+    // Expenses become draggable once armed; visual cue:
+    if (pressType === 'exp' && pressedEl) {
+      pressedEl.classList.remove('pressing');
+      pressedEl.classList.add('dragging');
+    }
+  }, HOLD_MS);
+}
+
+function onGesturePointerMove(ev) {
+  if (pressId === null) return;
+  const dx = Math.abs(ev.clientX - startX);
+  const dy = Math.abs(ev.clientY - startY);
+
+  // Not yet armed: movement means the user is scrolling — cancel the hold
+  if (!armed) {
+    if (dx > MOVE_CANCEL || dy > MOVE_CANCEL) resetGesture();
+    return;
   }
+
+  // Armed. For expenses, moving = reorder drag.
+  if (pressType === 'exp') {
+    dragging = true;
+    ev.preventDefault();
+    document.querySelectorAll('.exp-row.drop-target').forEach(r => r.classList.remove('drop-target'));
+    const over = document.elementFromPoint(ev.clientX, ev.clientY);
+    const overRow = over && over.closest && over.closest('[data-exp]');
+    if (overRow && overRow.dataset.exp !== pressId) overRow.classList.add('drop-target');
+  }
+}
+
+function onGesturePointerUp(ev) {
+  if (pressId === null) return;
+
+  // Armed + expense + actually dragged -> perform reorder
+  if (armed && pressType === 'exp' && dragging) {
+    const over = document.elementFromPoint(ev.clientX, ev.clientY);
+    const overRow = over && over.closest && over.closest('[data-exp]');
+    if (overRow && overRow.dataset.exp !== pressId) {
+      const fromIdx = state.expenses.findIndex(x => x.id === pressId);
+      let toIdx = state.expenses.findIndex(x => x.id === overRow.dataset.exp);
+      if (fromIdx > -1 && toIdx > -1) {
+        const [moved] = state.expenses.splice(fromIdx, 1);
+        toIdx = state.expenses.findIndex(x => x.id === overRow.dataset.exp);
+        const insertAt = fromIdx < toIdx ? toIdx + 1 : toIdx;
+        state.expenses.splice(insertAt, 0, moved);
+        save();
+      }
+    }
+    resetGesture();
+    render();
+    return;
+  }
+
+  // Armed but no drag -> open the hold menu (works for cat and exp)
+  if (armed && !dragging) {
+    const type = pressType, id = pressId;
+    resetGesture();
+    openMenu(type, id);
+    return;
+  }
+
+  // Not armed -> it was a plain tap; do nothing
+  resetGesture();
 }
 
 ['catList', 'expLog'].forEach(id => {
   const container = document.getElementById(id);
-  container.addEventListener('pointerdown', onPointerDown);
-  container.addEventListener('pointermove', onPointerMove);
-  container.addEventListener('pointerup', clearPress);
-  container.addEventListener('pointercancel', clearPress);
-  container.addEventListener('pointerleave', clearPress);
-  // Suppress the native long-press context menu so our menu wins
+  container.addEventListener('pointerdown', onGesturePointerDown);
+  container.addEventListener('pointermove', onGesturePointerMove);
+  container.addEventListener('pointerup', onGesturePointerUp);
+  container.addEventListener('pointercancel', resetGesture);
   container.addEventListener('contextmenu', (e) => {
     if (findRow(e.target)) e.preventDefault();
   });
-});
-
-// ---- Drag-and-drop reordering for expenses ----
-let dragId = null;
-let dragRow = null;
-
-const expLogEl = document.getElementById('expLog');
-
-expLogEl.addEventListener('pointerdown', (ev) => {
-  if (!ev.target.classList.contains('drag-handle')) return;
-  const row = ev.target.closest('[data-exp]');
-  if (!row) return;
-  ev.preventDefault();
-  dragId = row.dataset.exp;
-  dragRow = row;
-  row.classList.add('dragging');
-  row.setPointerCapture(ev.pointerId);
-  if (navigator.vibrate) { try { navigator.vibrate(10); } catch(e){} }
-});
-
-expLogEl.addEventListener('pointermove', (ev) => {
-  if (!dragId) return;
-  ev.preventDefault();
-  const rows = [...expLogEl.querySelectorAll('[data-exp]')];
-  rows.forEach(r => r.classList.remove('drop-target'));
-  const over = document.elementFromPoint(ev.clientX, ev.clientY);
-  const overRow = over && over.closest('[data-exp]');
-  if (overRow && overRow !== dragRow) overRow.classList.add('drop-target');
-});
-
-function finishDrag(ev) {
-  if (!dragId) return;
-  const over = document.elementFromPoint(ev.clientX, ev.clientY);
-  const overRow = over && over.closest('[data-exp]');
-  if (overRow && overRow.dataset.exp !== dragId) {
-    const fromIdx = state.expenses.findIndex(e => e.id === dragId);
-    let toIdx = state.expenses.findIndex(e => e.id === overRow.dataset.exp);
-    if (fromIdx > -1 && toIdx > -1) {
-      const [moved] = state.expenses.splice(fromIdx, 1);
-      // Recompute target index after removal
-      toIdx = state.expenses.findIndex(e => e.id === overRow.dataset.exp);
-      // Insert before or after depending on drag direction
-      const insertAt = fromIdx < toIdx ? toIdx + 1 : toIdx;
-      state.expenses.splice(insertAt, 0, moved);
-      save();
-    }
-  }
-  dragId = null;
-  dragRow = null;
-  render();
-}
-
-expLogEl.addEventListener('pointerup', finishDrag);
-expLogEl.addEventListener('pointercancel', () => {
-  if (dragId) { dragId = null; dragRow = null; render(); }
 });
 
 const overlay = document.getElementById('menuOverlay');
