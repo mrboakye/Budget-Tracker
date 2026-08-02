@@ -201,11 +201,17 @@
 
 <script>
 const STORAGE_KEY = 'aug2026-budget-standalone';
+const APP_VERSION = 'v7';
 
 window.addEventListener('error', (e) => {
   const d = document.getElementById('debug');
   if (d) d.textContent = 'JS ERROR: ' + (e.message || e.error);
 });
+
+// Defeat stale PWA cache: nuke old caches so a fresh index.html always wins.
+if ('caches' in window) {
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+}
 
 let state = {
   income: 2335,
@@ -221,9 +227,7 @@ let state = {
     {id:'annualins', name:'Annual insurances save up', budget:155},
     {id:'misc', name:'Miscellaneous', budget:153.5}
   ],
-  expenses: [
-    {id:'e_seed', cat:'invest', amount:1000, note:'Wedding expense', date:new Date().toISOString()}
-  ]
+  expenses: []
 };
 
 function load() {
@@ -238,6 +242,8 @@ function load() {
     }
   } catch(e) {}
   render();
+  const d = document.getElementById('debug');
+  if (d) d.textContent = 'debug: ready ' + APP_VERSION;
 }
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
@@ -525,7 +531,6 @@ document.getElementById('menuDelete').addEventListener('click', () => {
   if (!menuTarget) return;
   if (menuTarget.type === 'cat') {
     state.categories = state.categories.filter(c => c.id !== menuTarget.id);
-    // Orphaned expenses keep their cat id; they'll show the raw id. Remove them too.
     state.expenses = state.expenses.filter(e => e.cat !== menuTarget.id);
   } else {
     state.expenses = state.expenses.filter(e => e.id !== menuTarget.id);
@@ -588,7 +593,9 @@ load();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      reg.update();
+    }).catch(() => {});
   });
 }
 
