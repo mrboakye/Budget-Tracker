@@ -114,7 +114,9 @@
   .exp-label { flex: 1; }
   .exp-row.dragging { opacity: 0.6; background: var(--surface-2); border-radius: 6px; }
   .exp-row.drop-target { border-top: 2px solid var(--accent); }
-  .cat-row, .exp-row { transition: transform 0.1s; touch-action: pan-y; }
+  .cat-row, .exp-row { transition: transform 0.1s; }
+  .exp-row { touch-action: pan-y; }
+  .exp-row.armed { touch-action: none; }
   .pressing { transform: scale(0.98); background: var(--surface-2); }
   #menuOverlay, #editOverlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.3);
@@ -138,6 +140,7 @@
 <body>
 
 <h1>August Budget — Zero-Based</h1>
+<div id="debug" style="font-size:11px;color:#999;margin:-0.5rem 0 0.75rem;font-family:monospace;min-height:14px;">debug: ready</div>
 <button id="installBtn" style="display:none;width:100%;margin-bottom:1rem;background:var(--accent);">Install app</button>
 
 <div class="stats">
@@ -198,6 +201,11 @@
 
 <script>
 const STORAGE_KEY = 'aug2026-budget-standalone';
+
+window.addEventListener('error', (e) => {
+  const d = document.getElementById('debug');
+  if (d) d.textContent = 'JS ERROR: ' + (e.message || e.error);
+});
 
 let state = {
   income: 2335,
@@ -358,18 +366,19 @@ document.getElementById('addExpBtn').addEventListener('click', () => {
 });
 
 // ---- Gesture system: hold=menu, hold+move=reorder (expenses) ----
+const dbg = (m) => { const d = document.getElementById('debug'); if (d) d.textContent = 'debug: ' + m; };
 let menuTarget = null; // {type:'cat'|'exp', id}
 
-let pressTimer = null;   // timer that "arms" the gesture after a hold
-let pressedEl = null;    // row being pressed
-let pressType = null;    // 'cat' | 'exp'
+let pressTimer = null;
+let pressedEl = null;
+let pressType = null;
 let pressId = null;
 let startX = 0, startY = 0;
-let armed = false;       // hold threshold reached
-let dragging = false;    // actively reordering
+let armed = false;
+let dragging = false;
 let activePointer = null;
 const HOLD_MS = 350;
-const MOVE_CANCEL = 12;  // before armed: this much movement cancels the hold
+const MOVE_CANCEL = 12;
 
 function findRow(target) {
   const catRow = target.closest && target.closest('[data-cat-row]');
@@ -381,7 +390,7 @@ function findRow(target) {
 
 function resetGesture() {
   if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-  if (pressedEl) pressedEl.classList.remove('pressing', 'dragging');
+  if (pressedEl) pressedEl.classList.remove('pressing', 'dragging', 'armed');
   document.querySelectorAll('.exp-row.drop-target').forEach(r => r.classList.remove('drop-target'));
   pressedEl = null; pressType = null; pressId = null;
   armed = false; dragging = false; activePointer = null;
@@ -400,15 +409,19 @@ function onGesturePointerDown(ev) {
   startY = ev.clientY;
   activePointer = ev.pointerId;
   pressedEl.classList.add('pressing');
+  // Capture so subsequent moves/ups come to this element regardless of finger drift
+  try { pressedEl.setPointerCapture(ev.pointerId); } catch(e) {}
+  dbg('down ' + found.type + ' (' + ev.pointerType + ')');
   pressTimer = setTimeout(() => {
     armed = true;
     pressTimer = null;
     if (navigator.vibrate) { try { navigator.vibrate(15); } catch(e){} }
-    // Expenses become draggable once armed; visual cue:
-    if (pressType === 'exp' && pressedEl) {
+    if (pressedEl) {
       pressedEl.classList.remove('pressing');
-      pressedEl.classList.add('dragging');
+      pressedEl.classList.add('armed');
+      if (pressType === 'exp') pressedEl.classList.add('dragging');
     }
+    dbg('ARMED ' + pressType + ' — move to drag / release for menu');
   }, HOLD_MS);
 }
 
@@ -417,27 +430,27 @@ function onGesturePointerMove(ev) {
   const dx = Math.abs(ev.clientX - startX);
   const dy = Math.abs(ev.clientY - startY);
 
-  // Not yet armed: movement means the user is scrolling — cancel the hold
   if (!armed) {
-    if (dx > MOVE_CANCEL || dy > MOVE_CANCEL) resetGesture();
+    if (dx > MOVE_CANCEL || dy > MOVE_CANCEL) { dbg('scroll — cancel'); resetGesture(); }
     return;
   }
 
-  // Armed. For expenses, moving = reorder drag.
   if (pressType === 'exp') {
     dragging = true;
     ev.preventDefault();
     document.querySelectorAll('.exp-row.drop-target').forEach(r => r.classList.remove('drop-target'));
     const over = document.elementFromPoint(ev.clientX, ev.clientY);
     const overRow = over && over.closest && over.closest('[data-exp]');
-    if (overRow && overRow.dataset.exp !== pressId) overRow.classList.add('drop-target');
+    if (overRow && overRow.dataset.exp !== pressId) {
+      overRow.classList.add('drop-target');
+      dbg('dragging over ' + overRow.dataset.exp);
+    }
   }
 }
 
 function onGesturePointerUp(ev) {
   if (pressId === null) return;
 
-  // Armed + expense + actually dragged -> perform reorder
   if (armed && pressType === 'exp' && dragging) {
     const over = document.elementFromPoint(ev.clientX, ev.clientY);
     const overRow = over && over.closest && over.closest('[data-exp]');
@@ -450,22 +463,25 @@ function onGesturePointerUp(ev) {
         const insertAt = fromIdx < toIdx ? toIdx + 1 : toIdx;
         state.expenses.splice(insertAt, 0, moved);
         save();
+        dbg('reordered');
       }
+    } else {
+      dbg('dropped (no move)');
     }
     resetGesture();
     render();
     return;
   }
 
-  // Armed but no drag -> open the hold menu (works for cat and exp)
   if (armed && !dragging) {
     const type = pressType, id = pressId;
     resetGesture();
+    dbg('menu open');
     openMenu(type, id);
     return;
   }
 
-  // Not armed -> it was a plain tap; do nothing
+  dbg('tap — ignored');
   resetGesture();
 }
 
@@ -474,7 +490,7 @@ function onGesturePointerUp(ev) {
   container.addEventListener('pointerdown', onGesturePointerDown);
   container.addEventListener('pointermove', onGesturePointerMove);
   container.addEventListener('pointerup', onGesturePointerUp);
-  container.addEventListener('pointercancel', resetGesture);
+  container.addEventListener('pointercancel', () => { dbg('pointercancel'); resetGesture(); });
   container.addEventListener('contextmenu', (e) => {
     if (findRow(e.target)) e.preventDefault();
   });
