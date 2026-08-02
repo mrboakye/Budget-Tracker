@@ -110,14 +110,18 @@
     font-weight: 500;
   }
   #expLog { display: flex; flex-direction: column; gap: 4px; font-size: 13px; max-height: 220px; overflow-y: auto; }
-  .exp-row { display: flex; justify-content: space-between; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding: 4px 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-  .cat-row, .exp-row { transition: transform 0.1s; }
+  .exp-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding: 6px 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .exp-label { flex: 1; }
+  .drag-handle { cursor: grab; color: var(--border); font-size: 14px; letter-spacing: -2px; touch-action: none; padding: 0 2px; }
+  .exp-row.dragging { opacity: 0.5; background: var(--surface-2); }
+  .exp-row.drop-target { border-top: 2px solid var(--accent); }
+  .cat-row, .exp-row { transition: transform 0.1s; touch-action: pan-y; }
   .pressing { transform: scale(0.98); background: var(--surface-2); }
-  #menuOverlay {
+  #menuOverlay, #editOverlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.3);
     display: none; align-items: center; justify-content: center; z-index: 50;
   }
-  #menuOverlay.show { display: flex; }
+  #menuOverlay.show, #editOverlay.show { display: flex; }
   .menu-card {
     background: var(--surface); border-radius: 14px; overflow: hidden;
     min-width: 200px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
@@ -177,6 +181,19 @@
     <button class="menu-btn" id="menuEdit">Edit</button>
     <button class="menu-btn danger" id="menuDelete">Delete</button>
     <button class="menu-btn" id="menuCancel">Cancel</button>
+  </div>
+</div>
+
+<div id="editOverlay">
+  <div class="menu-card" style="padding:16px;min-width:260px;">
+    <div class="menu-title" style="padding:0 0 12px;border:none;">Edit expense</div>
+    <select id="editExpCat" style="width:100%;margin-bottom:8px;"></select>
+    <input type="number" id="editExpAmount" placeholder="€ amount" style="width:100%;margin-bottom:8px;" />
+    <input type="text" id="editExpNote" placeholder="Note (optional)" style="width:100%;margin-bottom:12px;" />
+    <div style="display:flex;gap:8px;">
+      <button id="editExpSave" style="flex:1;background:var(--accent);">Save</button>
+      <button id="editExpCancel" style="flex:1;background:var(--text-secondary);">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -282,12 +299,15 @@ function render() {
 
   const log = document.getElementById('expLog');
   log.innerHTML = '';
-  [...state.expenses].reverse().forEach(e => {
+  state.expenses.forEach(e => {
     const cat = state.categories.find(c => c.id === e.cat);
     const row = document.createElement('div');
     row.className = 'exp-row';
     row.dataset.exp = e.id;
-    row.innerHTML = '<span>' + (cat ? cat.name : e.cat) + (e.note ? ' — ' + e.note : '') + '</span><span>' + fmt(e.amount) + '</span>';
+    row.innerHTML =
+      '<span class="drag-handle">⠿</span>' +
+      '<span class="exp-label">' + (cat ? cat.name : e.cat) + (e.note ? ' — ' + e.note : '') + '</span>' +
+      '<span>' + fmt(e.amount) + '</span>';
     log.appendChild(row);
   });
 }
@@ -333,7 +353,7 @@ document.getElementById('addExpBtn').addEventListener('click', () => {
   const amount = parseFloat(document.getElementById('expAmount').value);
   const note = document.getElementById('expNote').value.trim();
   if (!cat || !amount) return;
-  state.expenses.push({id: 'e'+Date.now(), cat, amount, note, date: new Date().toISOString()});
+  state.expenses.unshift({id: 'e'+Date.now(), cat, amount, note, date: new Date().toISOString()});
   document.getElementById('expAmount').value = '';
   document.getElementById('expNote').value = '';
   save(); render();
@@ -343,6 +363,8 @@ document.getElementById('addExpBtn').addEventListener('click', () => {
 let pressTimer = null;
 let pressedEl = null;
 let menuTarget = null; // {type:'cat'|'exp', id}
+let startX = 0, startY = 0;
+const MOVE_CANCEL = 10; // px of movement that cancels a press
 
 function clearPress() {
   if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
@@ -354,9 +376,11 @@ function startPress(el, type, id) {
   pressedEl = el;
   el.classList.add('pressing');
   pressTimer = setTimeout(() => {
-    el.classList.remove('pressing');
+    if (pressedEl) pressedEl.classList.remove('pressing');
+    if (navigator.vibrate) { try { navigator.vibrate(15); } catch(e){} }
     openMenu(type, id);
-  }, 500);
+    pressTimer = null;
+  }, 450);
 }
 
 function findRow(target) {
@@ -367,22 +391,92 @@ function findRow(target) {
   return null;
 }
 
-function onPressStart(ev) {
-  // Don't hijack when interacting with an input/select directly
+function onPointerDown(ev) {
+  // Ignore right-click; let inputs/buttons work normally
+  if (ev.button === 2) return;
   if (ev.target.matches('input, select, button')) return;
+  if (ev.target.classList.contains('drag-handle')) return; // drag, not hold-menu
   const found = findRow(ev.target);
   if (!found) return;
+  startX = ev.clientX;
+  startY = ev.clientY;
   startPress(found.el, found.type, found.id);
+}
+
+function onPointerMove(ev) {
+  if (!pressTimer) return;
+  if (Math.abs(ev.clientX - startX) > MOVE_CANCEL ||
+      Math.abs(ev.clientY - startY) > MOVE_CANCEL) {
+    clearPress();
+  }
 }
 
 ['catList', 'expLog'].forEach(id => {
   const container = document.getElementById(id);
-  container.addEventListener('touchstart', onPressStart, { passive: true });
-  container.addEventListener('touchend', clearPress);
-  container.addEventListener('touchmove', clearPress);
-  container.addEventListener('mousedown', onPressStart);
-  container.addEventListener('mouseup', clearPress);
-  container.addEventListener('mouseleave', clearPress);
+  container.addEventListener('pointerdown', onPointerDown);
+  container.addEventListener('pointermove', onPointerMove);
+  container.addEventListener('pointerup', clearPress);
+  container.addEventListener('pointercancel', clearPress);
+  container.addEventListener('pointerleave', clearPress);
+  // Suppress the native long-press context menu so our menu wins
+  container.addEventListener('contextmenu', (e) => {
+    if (findRow(e.target)) e.preventDefault();
+  });
+});
+
+// ---- Drag-and-drop reordering for expenses ----
+let dragId = null;
+let dragRow = null;
+
+const expLogEl = document.getElementById('expLog');
+
+expLogEl.addEventListener('pointerdown', (ev) => {
+  if (!ev.target.classList.contains('drag-handle')) return;
+  const row = ev.target.closest('[data-exp]');
+  if (!row) return;
+  ev.preventDefault();
+  dragId = row.dataset.exp;
+  dragRow = row;
+  row.classList.add('dragging');
+  row.setPointerCapture(ev.pointerId);
+  if (navigator.vibrate) { try { navigator.vibrate(10); } catch(e){} }
+});
+
+expLogEl.addEventListener('pointermove', (ev) => {
+  if (!dragId) return;
+  ev.preventDefault();
+  const rows = [...expLogEl.querySelectorAll('[data-exp]')];
+  rows.forEach(r => r.classList.remove('drop-target'));
+  const over = document.elementFromPoint(ev.clientX, ev.clientY);
+  const overRow = over && over.closest('[data-exp]');
+  if (overRow && overRow !== dragRow) overRow.classList.add('drop-target');
+});
+
+function finishDrag(ev) {
+  if (!dragId) return;
+  const over = document.elementFromPoint(ev.clientX, ev.clientY);
+  const overRow = over && over.closest('[data-exp]');
+  if (overRow && overRow.dataset.exp !== dragId) {
+    const fromIdx = state.expenses.findIndex(e => e.id === dragId);
+    let toIdx = state.expenses.findIndex(e => e.id === overRow.dataset.exp);
+    if (fromIdx > -1 && toIdx > -1) {
+      const [moved] = state.expenses.splice(fromIdx, 1);
+      // Recompute target index after removal
+      toIdx = state.expenses.findIndex(e => e.id === overRow.dataset.exp);
+      // Insert before or after depending on drag direction
+      const insertAt = fromIdx < toIdx ? toIdx + 1 : toIdx;
+      state.expenses.splice(insertAt, 0, moved);
+      save();
+    }
+  }
+  dragId = null;
+  dragRow = null;
+  render();
+}
+
+expLogEl.addEventListener('pointerup', finishDrag);
+expLogEl.addEventListener('pointercancel', () => {
+  if (dragId) { dragId = null; dragRow = null; render(); }
 });
 
 const overlay = document.getElementById('menuOverlay');
@@ -422,23 +516,54 @@ document.getElementById('menuDelete').addEventListener('click', () => {
   save(); closeMenu(); render();
 });
 
+const editOverlay = document.getElementById('editOverlay');
+let editingExpId = null;
+
+function openExpEdit(id) {
+  const e = state.expenses.find(x => x.id === id);
+  if (!e) return;
+  editingExpId = id;
+  const sel = document.getElementById('editExpCat');
+  sel.innerHTML = state.categories.map(c => '<option value="'+c.id+'">'+c.name+'</option>').join('');
+  sel.value = e.cat;
+  document.getElementById('editExpAmount').value = e.amount;
+  document.getElementById('editExpNote').value = e.note || '';
+  editOverlay.classList.add('show');
+}
+
+function closeExpEdit() {
+  editOverlay.classList.remove('show');
+  editingExpId = null;
+}
+
+document.getElementById('editExpSave').addEventListener('click', () => {
+  const e = state.expenses.find(x => x.id === editingExpId);
+  if (e) {
+    const amt = parseFloat(document.getElementById('editExpAmount').value);
+    e.cat = document.getElementById('editExpCat').value;
+    if (!isNaN(amt)) e.amount = amt;
+    e.note = document.getElementById('editExpNote').value.trim();
+    save();
+  }
+  closeExpEdit();
+  render();
+});
+
+document.getElementById('editExpCancel').addEventListener('click', closeExpEdit);
+editOverlay.addEventListener('click', (e) => { if (e.target === editOverlay) closeExpEdit(); });
+
 document.getElementById('menuEdit').addEventListener('click', () => {
   if (!menuTarget) return;
   if (menuTarget.type === 'cat') {
+    const id = menuTarget.id;
     closeMenu();
     render();
-    const input = document.querySelector('[data-cat="' + menuTarget.id + '"][data-field="name"]');
+    const input = document.querySelector('[data-cat="' + id + '"][data-field="name"]');
     if (input) { input.focus(); input.select(); }
   } else {
-    const e = state.expenses.find(x => x.id === menuTarget.id);
-    if (!e) { closeMenu(); return; }
-    const newAmount = prompt('Amount (€):', e.amount);
-    if (newAmount === null) { closeMenu(); return; }
-    const amt = parseFloat(newAmount);
-    if (!isNaN(amt)) e.amount = amt;
-    const newNote = prompt('Note:', e.note || '');
-    if (newNote !== null) e.note = newNote.trim();
-    save(); closeMenu(); render();
+    const id = menuTarget.id;
+    closeMenu();
+    openExpEdit(id);
   }
 });
 
