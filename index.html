@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>August Budget Tracker</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#16a34a">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #f5f5f4;
+    --surface: #ffffff;
+    --surface-2: #fafaf9;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --text-secondary: #78716c;
+    --accent: #16a34a;
+    --danger: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 1rem;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 1rem; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 1.25rem;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem;
+  }
+  .stat p { margin: 0; }
+  .stat .label { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+  .stat .value { font-size: 18px; font-weight: 600; }
+  #catList { display: flex; flex-direction: column; gap: 8px; margin-bottom: 1rem; }
+  .cat-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .cat-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    gap: 8px;
+  }
+  .cat-name { font-size: 14px; font-weight: 500; }
+  .cat-amounts { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+  .cat-amounts.over { color: var(--danger); }
+  .edit-input {
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    color: inherit;
+    padding: 2px 4px;
+    border-radius: 4px;
+    min-width: 0;
+    flex: initial;
+  }
+  .edit-input:focus {
+    outline: none;
+    background: var(--surface-2);
+  }
+  .name-input { font-size: 14px; font-weight: 500; width: 100%; }
+  .budget-input { font-size: 12px; color: var(--text-secondary); width: 70px; text-align: right; }
+  .income-input { font-size: 18px; font-weight: 600; width: 100%; text-align: center; }
+  .bar-track { height: 6px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); }
+  .bar-fill.over { background: var(--danger); }
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .section h2 { font-size: 14px; font-weight: 600; margin: 0 0 0.75rem; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  input, select {
+    flex: 1;
+    min-width: 90px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  button {
+    background: var(--text);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  #expLog { display: flex; flex-direction: column; gap: 4px; font-size: 13px; max-height: 220px; overflow-y: auto; }
+  .exp-row { display: flex; justify-content: space-between; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding: 4px 0; }
+</style>
+</head>
+<body>
+
+<h1>August Budget — Zero-Based</h1>
+<button id="installBtn" style="display:none;width:100%;margin-bottom:1rem;background:var(--accent);">Install app</button>
+
+<div class="stats">
+  <div class="stat"><p class="label">Income</p><input type="number" class="edit-input income-input" id="incomeInput" /></div>
+  <div class="stat"><p class="label">Allocated</p><p class="value" id="allocOut">€0</p></div>
+  <div class="stat"><p class="label">Left to budget</p><p class="value" id="leftOut">€2,335</p></div>
+</div>
+<div class="stats" style="grid-template-columns: 1fr 1fr;">
+  <div class="stat"><p class="label">Total spent</p><p class="value" id="totalSpentOut">€0</p></div>
+  <div class="stat"><p class="label">Left to spend</p><p class="value" id="leftToSpendOut">€2,335</p></div>
+</div>
+
+<div id="catList"></div>
+
+<div class="section">
+  <h2>Add category</h2>
+  <div class="row">
+    <input type="text" id="newCatName" placeholder="Category name" />
+    <input type="number" id="newCatBudget" placeholder="Budget €" />
+    <button id="addCatBtn">Add</button>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Log an expense</h2>
+  <div class="row">
+    <select id="expCat"></select>
+  </div>
+  <div class="row">
+    <input type="number" id="expAmount" placeholder="€ amount" />
+    <input type="text" id="expNote" placeholder="Note (optional)" />
+    <button id="addExpBtn">Log</button>
+  </div>
+  <div id="expLog"></div>
+</div>
+
+<script>
+const STORAGE_KEY = 'aug2026-budget-standalone';
+
+let state = {
+  income: 0,
+  categories: [
+    {id:'rent', name:'Rent/Miete', budget:0, pct:null},
+    {id:'invest', name:'Wedding fund', budget:0, pct:null},
+    {id:'groceries', name:'Groceries', budget:0, pct:null},
+    {id:'gas', name:'Gas', budget:0, pct:null},
+    {id:'remittance', name:'Family remittance', budget:0, pct:null},
+    {id:'internet', name:'Internet', budget:0, pct:null},
+    {id:'electricity', name:'Electricity', budget:0, pct:null},
+    {id:'annualins', name:'Annual insurances save up', budget:0, pct:null},
+    {id:'misc', name:'Miscellaneous', budget:0, pct:null}
+  ],
+  expenses: []
+};
+
+function load() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      state = Object.assign({income: 0}, parsed);
+    }
+  } catch(e) {}
+  render();
+}
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+}
+function spentFor(catId) {
+  return state.expenses.filter(e => e.cat === catId).reduce((a,b) => a + b.amount, 0);
+}
+function fmt(n) {
+  return '€' + n.toLocaleString('de-DE', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+}
+function render() {
+  const incomeInput = document.getElementById('incomeInput');
+  if (document.activeElement !== incomeInput) incomeInput.value = state.income;
+
+  const allocated = state.categories.reduce((a,c) => a + c.budget, 0);
+  document.getElementById('allocOut').textContent = fmt(allocated);
+  document.getElementById('leftOut').textContent = fmt(state.income - allocated);
+
+  const totalSpent = state.expenses.reduce((a,e) => a + e.amount, 0);
+  const leftToSpend = allocated - totalSpent;
+  document.getElementById('totalSpentOut').textContent = fmt(totalSpent);
+  const leftEl = document.getElementById('leftToSpendOut');
+  leftEl.textContent = fmt(leftToSpend);
+  leftEl.style.color = leftToSpend < 0 ? 'var(--danger)' : 'var(--text)';
+
+  const catList = document.getElementById('catList');
+  catList.innerHTML = '';
+  state.categories.forEach(c => {
+    const spent = spentFor(c.id);
+    const remaining = c.budget - spent;
+    const pct = c.budget > 0 ? Math.min(100, Math.round((spent/c.budget)*100)) : 0;
+    const over = remaining < 0;
+    const row = document.createElement('div');
+    row.className = 'cat-row';
+    const pctOptions = ['', 5, 10, 15, 20, 25, 30, 40, 50].map(p => {
+      const val = p === '' ? '' : p;
+      const label = p === '' ? 'Custom %' : p + '%';
+      const selected = (c.pct === null || c.pct === undefined) ? (p === '' ? ' selected' : '') : (String(c.pct) === String(p) ? ' selected' : '');
+      return '<option value="' + val + '"' + selected + '>' + label + '</option>';
+    }).join('');
+    row.innerHTML =
+      '<div class="cat-top">' +
+        '<input type="text" class="edit-input name-input" data-cat="' + c.id + '" data-field="name" value="' + c.name.replace(/"/g,'&quot;') + '" />' +
+        '<span class="cat-amounts' + (over ? ' over' : '') + '" style="display:flex;align-items:center;gap:4px">' +
+          fmt(spent) + ' / €<input type="number" class="edit-input budget-input" data-cat="' + c.id + '" data-field="budget" value="' + c.budget + '" />' +
+          (over ? ' (over by ' + fmt(Math.abs(remaining)) + ')' : '') +
+        '</span>' +
+      '</div>' +
+      '<div class="cat-top" style="margin-top:-2px;margin-bottom:6px">' +
+        '<label style="font-size:11px;color:var(--text-secondary)">Allocate by</label>' +
+        '<select class="edit-input pct-select" data-cat="' + c.id + '" data-field="pct" style="font-size:12px;width:auto;flex:initial">' + pctOptions + '</select>' +
+      '</div>' +
+      '<div class="bar-track"><div class="bar-fill' + (over ? ' over' : '') + '" style="width:' + pct + '%"></div></div>';
+    catList.appendChild(row);
+  });
+
+  const sel = document.getElementById('expCat');
+  const prevVal = sel.value;
+  sel.innerHTML = state.categories.map(c => '<option value="'+c.id+'">'+c.name+'</option>').join('');
+  if (prevVal) sel.value = prevVal;
+
+  const log = document.getElementById('expLog');
+  log.innerHTML = '';
+  [...state.expenses].reverse().forEach(e => {
+    const cat = state.categories.find(c => c.id === e.cat);
+    const row = document.createElement('div');
+    row.className = 'exp-row';
+    row.innerHTML = '<span>' + (cat ? cat.name : e.cat) + (e.note ? ' — ' + e.note : '') + '</span><span>' + fmt(e.amount) + '</span>';
+    log.appendChild(row);
+  });
+}
+
+document.getElementById('incomeInput').addEventListener('change', (e) => {
+  const val = parseFloat(e.target.value);
+  state.income = isNaN(val) ? 0 : val;
+  state.categories.forEach(c => {
+    if (c.pct !== null && c.pct !== undefined) {
+      c.budget = Math.round((state.income * c.pct / 100) * 100) / 100;
+    }
+  });
+  save(); render();
+});
+
+document.getElementById('catList').addEventListener('change', (e) => {
+  const catId = e.target.dataset.cat;
+  const field = e.target.dataset.field;
+  if (!catId || !field) return;
+  const cat = state.categories.find(c => c.id === catId);
+  if (!cat) return;
+  if (field === 'name') {
+    cat.name = e.target.value.trim() || cat.name;
+  } else if (field === 'budget') {
+    const val = parseFloat(e.target.value);
+    cat.budget = isNaN(val) ? 0 : val;
+    cat.pct = null;
+  } else if (field === 'pct') {
+    const val = e.target.value;
+    if (val === '') {
+      cat.pct = null;
+    } else {
+      cat.pct = parseFloat(val);
+      cat.budget = Math.round((state.income * cat.pct / 100) * 100) / 100;
+    }
+  }
+  save(); render();
+});
+
+document.getElementById('addCatBtn').addEventListener('click', () => {
+  const name = document.getElementById('newCatName').value.trim();
+  const budget = parseFloat(document.getElementById('newCatBudget').value) || 0;
+  if (!name) return;
+  state.categories.push({id: 'c'+Date.now(), name, budget, pct: null});
+  document.getElementById('newCatName').value = '';
+  document.getElementById('newCatBudget').value = '';
+  save(); render();
+});
+
+document.getElementById('addExpBtn').addEventListener('click', () => {
+  const cat = document.getElementById('expCat').value;
+  const amount = parseFloat(document.getElementById('expAmount').value);
+  const note = document.getElementById('expNote').value.trim();
+  if (!cat || !amount) return;
+  state.expenses.push({cat, amount, note, date: new Date().toISOString()});
+  document.getElementById('expAmount').value = '';
+  document.getElementById('expNote').value = '';
+  save(); render();
+});
+
+load();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+
+let deferredPrompt;
+const installBtn = document.getElementById('installBtn');
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  installBtn.style.display = 'block';
+});
+installBtn.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  installBtn.style.display = 'none';
+});
+window.addEventListener('appinstalled', () => {
+  installBtn.style.display = 'none';
+});
+</script>
+</body>
+</html>
